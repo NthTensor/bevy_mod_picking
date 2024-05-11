@@ -240,6 +240,7 @@ impl Plugin for InteractionPlugin {
                     .in_set(PickSet::Focus),
             )
             .add_plugins((
+                EventListenerPlugin::<PointerEvent>::default(),
                 EventListenerPlugin::<Pointer<Over>>::default(),
                 EventListenerPlugin::<Pointer<Out>>::default(),
                 EventListenerPlugin::<Pointer<Down>>::default(),

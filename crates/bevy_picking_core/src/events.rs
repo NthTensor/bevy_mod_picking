@@ -17,6 +17,50 @@ use bevy_math::Vec2;
 use bevy_reflect::prelude::*;
 use bevy_utils::{tracing::error, HashMap};
 
+/// A unified pointer event type that allows reading all pointer events in a coherent order.
+#[derive(Clone, PartialEq, Debug, Reflect, Event)]
+#[allow(missing_docs)]
+pub enum PointerEvent {
+    Over(Pointer<Over>),
+    Out(Pointer<Out>),
+    Down(Pointer<Down>),
+    Up(Pointer<Up>),
+    Click(Pointer<Click>),
+    Move(Pointer<Move>),
+    DragStart(Pointer<DragStart>),
+    Drag(Pointer<Drag>),
+    DragEnd(Pointer<DragEnd>),
+    DragEnter(Pointer<DragEnter>),
+    DragOver(Pointer<DragOver>),
+    DragLeave(Pointer<DragLeave>),
+    Drop(Pointer<Drop>),
+}
+
+// We implement this manually because the macro dosn't work on enums
+impl EntityEvent for PointerEvent {
+    fn target(&self) -> Entity {
+        match self {
+            PointerEvent::Over(pointer) => pointer.target,
+            PointerEvent::Out(pointer) => pointer.target,
+            PointerEvent::Down(pointer) => pointer.target,
+            PointerEvent::Up(pointer) => pointer.target,
+            PointerEvent::Click(pointer) => pointer.target,
+            PointerEvent::Move(pointer) => pointer.target,
+            PointerEvent::DragStart(pointer) => pointer.target,
+            PointerEvent::Drag(pointer) => pointer.target,
+            PointerEvent::DragEnd(pointer) => pointer.target,
+            PointerEvent::DragEnter(pointer) => pointer.target,
+            PointerEvent::DragOver(pointer) => pointer.target,
+            PointerEvent::DragLeave(pointer) => pointer.target,
+            PointerEvent::Drop(pointer) => pointer.target,
+        }
+    }
+
+    fn can_bubble(&self) -> bool {
+        true
+    }
+}
+
 /// Stores the common data needed for all `PointerEvent`s.
 #[derive(Clone, PartialEq, Debug, Reflect, Event, EntityEvent)]
 #[can_bubble]
@@ -204,6 +248,7 @@ pub fn pointer_events(
     hover_map: Res<HoverMap>,
     previous_hover_map: Res<PreviousHoverMap>,
     // Output
+    mut pointer_events: EventWriter<PointerEvent>,
     mut pointer_move: EventWriter<Pointer<Move>>,
     mut pointer_over: EventWriter<Pointer<Over>>,
     mut pointer_out: EventWriter<Pointer<Out>>,
@@ -228,12 +273,14 @@ pub fn pointer_events(
             .iter()
             .flat_map(|h| h.iter().map(|(entity, data)| (*entity, data.to_owned())))
         {
-            pointer_move.send(Pointer::new(
+            let pointer = Pointer::new(
                 pointer_id,
                 location.clone(),
                 hovered_entity,
                 Move { hit, delta },
-            ));
+            );
+            pointer_move.send(pointer.clone());
+            pointer_events.send(PointerEvent::Move(pointer));
         }
     }
 
@@ -255,12 +302,14 @@ pub fn pointer_events(
                     );
                     continue;
                 };
-                pointer_up.send(Pointer::new(
+                let pointer = Pointer::new(
                     press_event.pointer_id,
                     location,
                     hovered_entity,
                     Up { button, hit },
-                ));
+                );
+                pointer_up.send(pointer.clone());
+                pointer_events.send(PointerEvent::Up(pointer));
             }
         }
         for (hovered_entity, hit) in hover_map
@@ -276,12 +325,14 @@ pub fn pointer_events(
                     );
                     continue;
                 };
-                pointer_down.send(Pointer::new(
+                let pointer = Pointer::new(
                     press_event.pointer_id,
                     location,
                     hovered_entity,
                     Down { button, hit },
-                ));
+                );
+                pointer_down.send(pointer.clone());
+                pointer_events.send(PointerEvent::Down(pointer));
             }
         }
     }
@@ -301,12 +352,9 @@ pub fn pointer_events(
                 error!("Unable to get location for pointer {:?}", pointer_id);
                 continue;
             };
-            pointer_over.send(Pointer::new(
-                pointer_id,
-                location,
-                hovered_entity,
-                Over { hit },
-            ));
+            let pointer = Pointer::new(pointer_id, location, hovered_entity, Over { hit });
+            pointer_over.send(pointer.clone());
+            pointer_events.send(PointerEvent::Over(pointer));
         }
     }
 
@@ -325,12 +373,9 @@ pub fn pointer_events(
                 error!("Unable to get location for pointer {:?}", pointer_id);
                 continue;
             };
-            pointer_out.send(Pointer::new(
-                pointer_id,
-                location,
-                hovered_entity,
-                Out { hit },
-            ));
+            let pointer = Pointer::new(pointer_id, location, hovered_entity, Out { hit });
+            pointer_out.send(pointer.clone());
+            pointer_events.send(PointerEvent::Out(pointer));
         }
     }
 }
@@ -361,6 +406,7 @@ pub fn send_click_and_drag_events(
     mut down_map: Local<HashMap<(PointerId, PointerButton), HashMap<Entity, Pointer<Down>>>>,
     // Output
     mut drag_map: ResMut<DragMap>,
+    mut pointer_events: EventWriter<PointerEvent>,
     mut pointer_click: EventWriter<Pointer<Click>>,
     mut pointer_drag_start: EventWriter<Pointer<DragStart>>,
     mut pointer_drag_end: EventWriter<Pointer<DragEnd>>,
@@ -397,7 +443,7 @@ pub fn send_click_and_drag_events(
                         latest_pos: down.pointer_location.position,
                     },
                 );
-                pointer_drag_start.send(Pointer::new(
+                let pointer = Pointer::new(
                     pointer_id,
                     down.pointer_location.clone(),
                     down.target,
@@ -405,7 +451,9 @@ pub fn send_click_and_drag_events(
                         button,
                         hit: down.hit.clone(),
                     },
-                ));
+                );
+                pointer_drag_start.send(pointer.clone());
+                pointer_events.send(PointerEvent::DragStart(pointer));
             }
 
             for (dragged_entity, drag) in drag_list.iter_mut() {
@@ -415,12 +463,10 @@ pub fn send_click_and_drag_events(
                     delta: location.position - drag.latest_pos,
                 };
                 drag.latest_pos = location.position;
-                pointer_drag.send(Pointer::new(
-                    pointer_id,
-                    location.clone(),
-                    *dragged_entity,
-                    drag_event,
-                ));
+                let pointer =
+                    Pointer::new(pointer_id, location.clone(), *dragged_entity, drag_event);
+                pointer_drag.send(pointer.clone());
+                pointer_events.send(PointerEvent::Drag(pointer));
             }
         }
     }
@@ -439,12 +485,9 @@ pub fn send_click_and_drag_events(
             .and_then(|down| down.get(&target))
             .is_some()
         {
-            pointer_click.send(Pointer::new(
-                pointer_id,
-                pointer_location,
-                target,
-                Click { button, hit },
-            ));
+            let pointer = Pointer::new(pointer_id, pointer_location, target, Click { button, hit });
+            pointer_click.send(pointer.clone());
+            pointer_events.send(PointerEvent::Click(pointer));
         }
     }
 
@@ -475,12 +518,9 @@ pub fn send_click_and_drag_events(
                 button: press.button,
                 distance: drag.latest_pos - drag.start_pos,
             };
-            pointer_drag_end.send(Pointer::new(
-                press.pointer_id,
-                location.clone(),
-                drag_target,
-                drag_end,
-            ));
+            let pointer = Pointer::new(press.pointer_id, location.clone(), drag_target, drag_end);
+            pointer_drag_end.send(pointer.clone());
+            pointer_events.send(PointerEvent::DragEnd(pointer));
         }
     }
 }
@@ -497,6 +537,7 @@ pub fn send_drag_over_events(
     mut drag_over_map: Local<HashMap<(PointerId, PointerButton), HashMap<Entity, HitData>>>,
 
     // Output
+    mut pointer_events: EventWriter<PointerEvent>,
     mut pointer_drag_enter: EventWriter<Pointer<DragEnter>>,
     mut pointer_drag_over: EventWriter<Pointer<DragOver>>,
     mut pointer_drag_leave: EventWriter<Pointer<DragLeave>>,
@@ -526,12 +567,9 @@ pub fn send_drag_over_events(
                     dragged: *drag_target,
                     hit: hit.clone(),
                 };
-                pointer_drag_enter.send(Pointer::new(
-                    pointer_id,
-                    pointer_location.clone(),
-                    target,
-                    event,
-                ));
+                let pointer = Pointer::new(pointer_id, pointer_location.clone(), target, event);
+                pointer_drag_enter.send(pointer.clone());
+                pointer_events.send(PointerEvent::DragEnter(pointer));
             }
         }
     }
@@ -553,7 +591,7 @@ pub fn send_drag_over_events(
                     |&&drag_target| target != drag_target, /* can't drag over itself */
                 )
             {
-                pointer_drag_over.send(Pointer::new(
+                let pointer = Pointer::new(
                     pointer_id,
                     pointer_location.clone(),
                     target,
@@ -562,7 +600,9 @@ pub fn send_drag_over_events(
                         dragged: *drag_target,
                         hit: hit.clone(),
                     },
-                ));
+                );
+                pointer_drag_over.send(pointer.clone());
+                pointer_events.send(PointerEvent::DragOver(pointer));
             }
         }
     }
@@ -582,7 +622,7 @@ pub fn send_drag_over_events(
             continue;
         };
         for (dragged_over, hit) in drag_over_set.drain() {
-            pointer_drag_leave.send(Pointer::new(
+            let pointer = Pointer::new(
                 pointer_id,
                 pointer_location.clone(),
                 dragged_over,
@@ -591,8 +631,11 @@ pub fn send_drag_over_events(
                     dragged: target,
                     hit: hit.clone(),
                 },
-            ));
-            pointer_drop.send(Pointer::new(
+            );
+            pointer_drag_leave.send(pointer.clone());
+            pointer_events.send(PointerEvent::DragLeave(pointer));
+
+            let pointer = Pointer::new(
                 pointer_id,
                 pointer_location.clone(),
                 dragged_over,
@@ -601,7 +644,9 @@ pub fn send_drag_over_events(
                     dropped: target,
                     hit: hit.clone(),
                 },
-            ));
+            );
+            pointer_drop.send(pointer.clone());
+            pointer_events.send(PointerEvent::Drop(pointer));
         }
     }
 
@@ -624,7 +669,7 @@ pub fn send_drag_over_events(
                 continue;
             };
             for drag_target in drag_list.keys() {
-                pointer_drag_leave.send(Pointer::new(
+                let pointer = Pointer::new(
                     pointer_id,
                     pointer_location.clone(),
                     target,
@@ -633,7 +678,9 @@ pub fn send_drag_over_events(
                         dragged: *drag_target,
                         hit: hit.clone(),
                     },
-                ));
+                );
+                pointer_drag_leave.send(pointer.clone());
+                pointer_events.send(PointerEvent::DragLeave(pointer));
             }
         }
     }
